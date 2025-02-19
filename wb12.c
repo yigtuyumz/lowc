@@ -5,7 +5,14 @@
 //         unsigned long long int count)
 // __asm__("_write");
 
-static unsigned long long int
+typedef unsigned long int ub64;
+typedef long int b64;
+typedef unsigned int ub32;
+typedef int b32;
+
+b32 a = 100;
+
+static ub64
 _strlenx(const char *s)
 {
     __asm__ volatile ("xor rax, rax\n"
@@ -15,31 +22,34 @@ _strlenx(const char *s)
                       ".loop:\n"
                       "inc rax\n"
                       "inc rdi\n"
-                      "cmp byte ptr [rdi], 0\n" "jne .loop\n" ".end:\n");
+                      "cmp byte ptr [rdi], 0\n"
+                      "jne .loop\n"
+                      ".end:\n");
 }
 
-static unsigned long long int
-_writex(unsigned long long int fd, const void *buf,
-        unsigned long long int count)
+static ub64
+_writex(ub64 fd, const void *buf, ub64 count)
 {
     __asm__ volatile ("mov rax, 0x01\n"
                       "mov rdi, [rbp - 8]\n"
                       "mov rsi, [rbp - 16]\n"
-                      "mov rdx, [rbp - 24]\n" "syscall\n");
+                      "mov rdx, [rbp - 24]\n"
+                      "syscall\n");
 
 }
 
 static void
-_exitx(unsigned long long int status)
+_exitx(ub64 status)
 {
-    __asm__ volatile ("mov rax, 60\n" "syscall\n");
+    __asm__ volatile ("mov rax, 60\n"
+                      "syscall\n");
 }
 
 void
 _wb12(void)
 {
     const char *str = "wb12!\n";
-    unsigned long long int len = _strlenx(str);
+    ub64 len = _strlenx(str);
 
     _writex(1, str, len);
     _exitx(0);

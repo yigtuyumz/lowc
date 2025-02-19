@@ -2,9 +2,11 @@ CC := gcc
 LD := ld
 AS := nasm
 
+TARGET := wb12
+
 ASFLAGS := -f elf64
 CFLAGS := -fno-builtin -nostdlib -nodefaultlibs -ffreestanding -nostdinc -fno-toplevel-reorder -masm=intel -O0
-LDFLAGS := -T linker.ld -static
+LDFLAGS := -T linker.ld -static --entry=_$(TARGET)
 
 # The following command generates WTFLAGS:
 # gcc -Q -O0 --help=optimizers 2>&1 | perl -ane 'if ($F[1] =~/enabled/) {$F[0] =~ s/^\s*-f/-fno-/g;push @o,$F[0];}} END {print join(" ", @o)'
@@ -60,10 +62,6 @@ WTFLAGS := -fno-aggressive-loop-optimizations		\
 				-fno-tree-scev-cprop				\
 				-fno-unreachable-traps				\
 
-
-
-TARGET := wb12
-
 all:
 	$(CC) $(CFLAGS) -c $(TARGET).c -o $(TARGET).o
 	$(LD) $(LDFLAGS) $(TARGET).o -o $(TARGET)
@@ -75,6 +73,12 @@ wtf:
 	$(LD) $(LDFLAGS) $(TARGET)wtf.o -o $(TARGET)wtf
 	@rm -rf $(TARGET)wtf.o
 # strip $(TARGET)
+
+i:
+	objdump -D -M intel $(TARGET)
+
+rep: clean all
+	objdump -D -M intel $(TARGET) > rep
 
 clean:
 	@rm -rf $(TARGET).o $(TARGET) $(TARGET)wtf $(TARGET)wtf.o
