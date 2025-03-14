@@ -5,7 +5,7 @@ AS := nasm
 TARGET := wb12
 
 ASFLAGS := -f elf64
-CFLAGS := -fno-builtin -nostdlib -nodefaultlibs -ffreestanding -nostdinc -fno-toplevel-reorder -masm=intel -O0
+CFLAGS := -fno-builtin -nostdlib -nodefaultlibs -ffreestanding -nostdinc -fno-toplevel-reorder -masm=intel -O0 -D__BEGIN_TYPEDEFS -D__END_TYPEDEFS
 LDFLAGS := -T linker.ld -static --entry=_$(TARGET)
 
 # The following command generates WTFLAGS:
