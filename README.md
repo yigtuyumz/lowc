@@ -11,7 +11,7 @@
 
 ## Changelog
 
-### [2024-XX-XX] - Code Quality & Optimization Disabling
+### [2025-12-10] - Code Quality & Optimization Disabling
 - **Linker Script (linker.ld)**: Added 4KB alignment for all sections (.text, .rodata, .data, .bss) to ensure proper memory alignment
 - **Makefile**: Implemented comprehensive optimization disabling flags (WTFLAGS) including:
   - Inline function optimizations disabled (`-fno-inline`, `-fno-inline-functions`)
