@@ -149,6 +149,8 @@ rep: clean all
 
 clean:
 	@rm -rf $(OBJ) $(EXEC) $(OBJ_WTF) $(EXEC_WTF)
+	@rm -rf nolibs
+	@rm -rf executable_memory
 
 re: clean all
 
@@ -156,5 +158,8 @@ fclean: clean
 
 .PHONY: all wtf i rep clean re fclean nolibs
 
-nolibs:
-	gcc -nostdlib -nostdinc -ffreestanding -fno-toplevel-reorder -fno-builtin -fno-common -masm=intel -s -Wl,--build-id=0x31313131 -o nolibs nolibs.c
+nolibs: nolibs.c
+	$(CC) -nostdlib -nostdinc -ffreestanding -fno-toplevel-reorder -fno-builtin -fno-common -masm=intel -s -Wl,--build-id=0x31313131 -o nolibs nolibs.c
+
+executable_memory: executable_memory.c
+	$(CC) executable_memory.c -o executable_memory
